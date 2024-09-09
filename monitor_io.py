@@ -182,28 +182,24 @@ def update_io_stats():
 
 
 def update_cpu_stats():
-    global cpu_x, cpu_yP, cpu_yT, cpu_plot
+    global cpu_x, cpu_y, cpu_plot
     cpu_plot.clear()
     cpu_x.append(cpu_x[-1] + 1)
-    cpu_yP.append(package_cpu_usage)
-    cpu_yT.append(total_cpu_usage)
+    cpu_y.append(cpu_usage)
     if len(cpu_x) > 30:
         cpu_x.pop(0)
-        cpu_yP.pop(0)
-        cpu_yT.pop(0)
-    cpu_plot.plot(cpu_x, cpu_yP)
-    cpu_plot.plot(cpu_x, cpu_yT)
+        cpu_y.pop(0)
+    cpu_plot.plot(cpu_x, cpu_y)
     cpu_plot.set_title('CPU Performance Metrics')
     if max(cpu_x) < 30:
         cpu_plot.set_xlim(0, 30)
-    if max(package_cpu_usage,total_cpu_usage) > 50:
+    if max(cpu_y) > 50:
         cpu_plot.set_ylim(0, 100)
-    elif max(package_cpu_usage,total_cpu_usage) > 30:
+    elif max(cpu_y) > 30:
         cpu_plot.set_ylim(0, 50)
     else:
         cpu_plot.set_ylim(0, 30)
-    cpu_plot.text(cpu_x[-1] - 1,cpu_yP[-1] - 3,f'{package_cpu_usage}%',fontdict={'fontsize':11})
-    cpu_plot.text(cpu_x[-1] - 1,cpu_yT[-1] + 2,f'{total_cpu_usage}%',fontdict={'fontsize':11})
+    cpu_plot.text(cpu_x[-1] - 1,cpu_y[-1] - 3,f'{cpu_usage}%',fontdict={'fontsize':11})
 
 def update_mem_stats():
     global mem_x, mem_y, mem_plot, mem_yList, memory_io
@@ -436,21 +432,24 @@ def monitor_touch_events(event_type):
         touch_process.stderr.close()
         touch_process.kill()
     
-def monitor_cpu(package_name):
-    global cpu_process
-    # 使用ADB命令监控触摸事件
-    command = ["adb", "shell", "top"]
-    cpu_process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    try:
-        for line in iter(cpu_process.stdout.readline, ''):
-                if line and "package_name" in line:
-                    print("cpu:",line.split())
-    except KeyboardInterrupt:# 捕获Ctrl+C中断信号
-        log_message("Stopping cpu monitor.")
-    finally:
-        cpu_process.stdout.close()
-        cpu_process.stderr.close()
-        cpu_process.kill()
+def monitor_cpu():
+    global cpu_process, cpu_usage,pid
+    # 使用CPU监控事件
+    while True:
+        if stop_threads:
+            break
+        if len(pid) > 0:
+            result = subprocess.run(["adb", "shell", f"top -n 1 -p {pid}"], capture_output=True, text=True)
+            if result.returncode != 0:
+                cpu_usage = 0
+
+            lines = result.stdout.strip().splitlines()
+            cleaned_list = [item for item in lines if item]
+            for i in range(len(cleaned_list)):
+                if "TIME+ ARGS" in cleaned_list[i]:
+                    line = re.compile(r'\x1b\[.*?m').sub('', cleaned_list[i+1])
+                    cpu_usage = float(line.split()[8])
+
 
 def start_monitor_thread(package_name, event_type, interval=0.5):
     global monitor_thread
@@ -467,14 +466,14 @@ def start_monitor_touch_events_thread(event_type):
     touch_thread.daemon = True
     touch_thread.start()
 
-def start_monitor_cpu_thread(package_name):
+def start_monitor_cpu_thread():
     global cpu_thread
     """启动CPU TOP监控线程"""
-    cpu_thread = threading.Thread(target=monitor_cpu, name="cpu_Thread", args=(package_name,))
-    touch_cpu_threadthread.daemon = True
+    cpu_thread = threading.Thread(target=monitor_cpu, name="cpu_Thread")
+    cpu_thread.daemon = True
     cpu_thread.start()
 
-def start_to_Monitor(package_name,event_type, interval=0.5):
+def start_to_Monitor(package_name, event_type, interval=0.5):
     global monitor,prev_timer,stop_threads,prev_meminfo_timer
     if not monitor:
         prev_timer = time.time()    ###记录IO初始时间
@@ -482,7 +481,7 @@ def start_to_Monitor(package_name,event_type, interval=0.5):
         stop_threads = False
         start_monitor_thread(package_name,event_type,interval)
         start_monitor_touch_events_thread(event_type)
-        start_monitor_cpu_thread(package_name)
+        start_monitor_cpu_thread()
     else:
         log_message("Monitor is running")
 
@@ -495,14 +494,13 @@ def kill_thread():
         touch_process.kill()
         touch_thread.join()
     if cpu_thread and cpu_thread.is_alive():
-        cpu_thread.kill()
         cpu_thread.join()
     monitor = False
     log_message("Monitoring stopped.")
 
 
 def open_root():
-    global root, log_text, chart_frame, canvas
+    global root, log_text, chart_frame, canvas, pid
 
     root = Tk()
     root.title("Android Monitor")
@@ -579,13 +577,13 @@ def open_root():
     root.mainloop()
 
 def monitor_io_and_fps(package_name,interval=0.5):
-    global touchNum,monitor,chart_frame
-    global read_bytes_sec,write_bytes_sec,fps,package_cpu_usage,total_cpu_usage ###绘图全局变量
+    global touchNum,monitor,chart_frame,pid
+    global read_bytes_sec,write_bytes_sec,fps,cpu_usage ###绘图全局变量
     global prev_timer,prev_meminfo_timer,memory_io
 
     """Monitor the IO throughput and FPS of the given package name."""
     pid = get_pid(package_name)
-    if not pid:
+    if pid == 0:
         log_message(f"Could not find PID for package: {package_name}")
         return
 
@@ -662,11 +660,7 @@ def monitor_io_and_fps(package_name,interval=0.5):
             log_message(f"FPS: {fps:.2f},{janky_frames}")
         
         ###CPU
-        package_cpu_usage,total_cpu_usage = get_cpuinfo(package_name)# 读取CPU信息,return类型为list
-        if package_cpu_usage == 0:
-            log_message(f"No vaild CPU info")
-        else:
-            log_message(f"{package_name} CPU usage:{package_cpu_usage:.1f}%,total CPU usage:{total_cpu_usage:.1f}%")
+        log_message(f"{package_name} CPU usage:{cpu_usage:.1f}%")
 
         log_message(f"Monitor: {touchNum} CPS\n")
         touchNum = 0 # 重置touchNum
@@ -685,13 +679,13 @@ if __name__ == "__main__":
     touchNum = 0
     global monitor 
     monitor = False
+    global pid
+    pid = ""
     global read_bytes_sec
     global write_bytes_sec
     global fps
-    global package_cpu_usage
-    global total_cpu_usage 
-    read_bytes_sec = write_bytes_sec  = 0.00 # 初始化绘图全局变量
-    package_cpu_usage = total_cpu_usage = 0.00
+    global cpu_usage
+    cpu_usage = read_bytes_sec = write_bytes_sec  = 0.00 # 初始化绘图全局变量
     fps = 60.0
     global stop_threads 
     stop_threads = False
@@ -712,9 +706,9 @@ if __name__ == "__main__":
     last_meminfo_io = 0
     global memory_io
     memory_io = 0
-    global fps_x, fps_y, io_x, io_yR, io_yW, cpu_x, cpu_yP, cpu_yT, mem_x, mem_y
+    global fps_x, fps_y, io_x, io_yR, io_yW, cpu_x, cpu_y, mem_x, mem_y
 
-    fps_x, fps_y, io_x, io_yR, io_yW, cpu_x, cpu_yP, cpu_yT , mem_x, mem_y= [0], [0], [0], [0], [0], [0], [0], [0], [0], [0]
+    fps_x, fps_y, io_x, io_yR, io_yW, cpu_x, cpu_y, mem_x, mem_y= [0], [0], [0], [0], [0], [0], [0], [0], [0]
     global io_yList
     io_yList = []
     global mem_yList
