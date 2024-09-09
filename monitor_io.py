@@ -367,30 +367,6 @@ def get_frame_stats(package_name,current_focus_window):
     janke_frames = f"Janky frames: {len(janky_list)} ({FER:.2f}%)"
     return fps,janke_frames
 
-def get_cpuinfo(package_name):
-    """Get the cpuinfo."""
-
-    result = subprocess.run(["adb", "shell", "dumpsys cpuinfo"], capture_output=True, text=True)
-    if result.returncode != 0:
-        return None
-
-    package_cpu_usage = 0
-    total_cpu_usage = 0
-
-    lines = result.stdout.splitlines()
-    for line in lines:
-        line = line.strip()
-        pattern = r"^\d+(\.\d+)?%"
-        result = re.match(pattern, line)
-        if result and package_name in line:
-            package_cpu_usage = float(line.split(" ")[0].replace("%",""))
-        elif result and "TOTAL" in line:
-            total_cpu_usage = float(line.split(" ")[0].replace("%",""))
-        else:
-            pass
-
-    return package_cpu_usage,total_cpu_usage
-
 def get_meminfo(package_name):
     """Get the memory used info."""
     global last_meminfo_io
