@@ -486,7 +486,7 @@ def start_to_Monitor(package_name, event_type, interval=0.5):
         log_message("Monitor is running")
 
 def kill_thread():
-    global monitor_thread, touch_thread, cpu_thread, stop_threads, monitor, touch_processs
+    global monitor_thread, touch_thread, cpu_thread, stop_threads, monitor, touch_process, pid
     stop_threads = True
     if monitor_thread and monitor_thread.is_alive():
         monitor_thread.join()
@@ -496,6 +496,7 @@ def kill_thread():
     if cpu_thread and cpu_thread.is_alive():
         cpu_thread.join()
     monitor = False
+    pid = ""
     log_message("Monitoring stopped.")
 
 
@@ -583,7 +584,7 @@ def monitor_io_and_fps(package_name,interval=0.5):
 
     """Monitor the IO throughput and FPS of the given package name."""
     pid = get_pid(package_name)
-    if pid == 0:
+    if not pid :
         log_message(f"Could not find PID for package: {package_name}")
         return
 
@@ -670,7 +671,7 @@ def set_logging():
     logging.basicConfig(
     level=logging.INFO,  # 设置日志级别为DEBUG，意味着会记录所有级别的日志
     format='%(asctime)s - %(levelname)s - %(message)s',  # 设置日志输出格式
-    filename=f'{current_time}.log',  # 设置日志文件名
+    filename=rf'D:\Git-script\monitor_io\log\{current_time}.csv',  # 设置日志文件名
     filemode='a'  # 追加模式（默认是'a'，即追加日志到文件末尾；'w'表示写模式，每次覆盖文件内容）
 )
 
