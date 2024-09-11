@@ -467,11 +467,13 @@ def monitor_gpu():
     ]
     
     gpu_commands = [
+        "echo gpu_set_log_level 0 > /dev/kgsl-control",
+        "echo gpubusystats 0 > /dev/kgsl-control",
         "echo gpu_set_log_level 4 > /dev/kgsl-control",
         "echo gpubusystats 1000 > /dev/kgsl-control",
         "slog2info -W | grep -i kgsl"
     ]
-    log_message("开始连接并登录QNX系统")    
+    print("开始连接并登录QNX系统")    
 
     try:
         # 启动 adb shell
@@ -488,12 +490,12 @@ def monitor_gpu():
         # 执行登录命令
         for command in login_commands:
             send_command(gpu_process, command)
-        log_message("成功登录QNX系统，开始设置和监控GPU信息")  
+        print("成功登录QNX系统，开始设置和监控GPU信息")  
         
         # 设置GPU监控
         for command in gpu_commands:
-            send_command(gpu_process, command, wait=1)  # 设置日志级别
-        log_message("成功设置和监控GPU信息")
+            send_command(gpu_process, command, wait=1)
+        print("成功设置和监控GPU信息")
 
         while True:
             if stop_threads:
