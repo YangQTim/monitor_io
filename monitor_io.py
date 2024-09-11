@@ -203,13 +203,19 @@ def update_cpu_stats():
     cpu_plot.set_title('CPU Performance Metrics')
     if max(cpu_x) < 30:
         cpu_plot.set_xlim(0, 30)
-    if max(cpu_y) > 50:
+    if max(cpu_y) > 400:
+        cpu_plot.set_ylim(0, 800)
+    elif max(cpu_y) > 200:
+        cpu_plot.set_ylim(0, 400)
+    elif max(cpu_y) > 100:
+        cpu_plot.set_ylim(0, 200)
+    elif max(cpu_y) > 50:
         cpu_plot.set_ylim(0, 100)
     elif max(cpu_y) > 30:
         cpu_plot.set_ylim(0, 50)
     else:
         cpu_plot.set_ylim(0, 30)
-    cpu_plot.text(cpu_x[-1] - 1,cpu_y[-1] - 3,f'{cpu_usage}%',fontdict={'fontsize':11})
+    cpu_plot.text(cpu_x[-1] - 1,cpu_y[-1] + 5,f'{cpu_usage}%',fontdict={'fontsize':11})
 
 def update_gpu_stats():
     global gpu_x, gpu_y, gpu_plot, gpu
@@ -312,7 +318,7 @@ def get_frame_stats(package_name,current_focus_window):
 
     for line in lines:
         ###调试一下
-        if ("Window" in line and current_focus_window in line) or ("Graphics" in line and package_name in line):
+        if "Window" in line and current_focus_window in line:
             isHaveFoundWindow = True
             continue
         if isHaveFoundWindow and "---PROFILEDATA---" in line:
@@ -323,7 +329,6 @@ def get_frame_stats(package_name,current_focus_window):
             continue
         if isHaveFoundWindow and (PROFILEDATA_line == 1) and (intended_vsync_index & frame_completed_index) != 0:
             # 此处代表的是当前活动窗口
-            # 我们取PROFILEDATA中间的数据 最多128帧，还可能包含之前重复的帧，所以我们间隔1.5s就取一次数据
             fields = []
             fields = line.split(",")
             each_frame_timestamp = [float(fields[intended_vsync_index]), float(fields[frame_completed_index])]
