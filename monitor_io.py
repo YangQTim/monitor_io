@@ -28,6 +28,13 @@ def process_log_queue():
             log_text.yview(END)
     root.after(100, process_log_queue)  # 每100ms检查一次队列
 
+def send_command(proc, command, wait=1):
+    """发送命令到子进程，并等待指定时间"""
+    print(f"发送命令: {command}")
+    proc.stdin.write(command + "\n")
+    proc.stdin.flush()
+    time.sleep(wait)
+
 def show_current_focus_window():
     """打印当前active window"""
     activity = get_current_focus_window()
@@ -73,7 +80,7 @@ def get_app_startup_time(name):
     return None
 
 def plot_canvas(root):
-    global fps_plot, io_plot, cpu_plot, mem_plot, canvas
+    global fps_plot, io_plot, cpu_plot, gpu_plot, canvas
     f = Figure(figsize=(6, 3), dpi=100)#figsize定义图像大小，dpi定义像素
 
     # 在创建子图fps_plot变量
@@ -100,13 +107,13 @@ def plot_canvas(root):
     cpu_plot.set_xlim(0, 30)
     cpu_plot.set_ylim(0, 30)
 
-    # 在创建子图mem_plot变量
-    mem_plot = f.add_subplot(414)
-    mem_plot.clear()
-    mem_plot.set_ylabel('Values')
-    mem_plot.set_title('MEMORY Performance Metrics')
-    mem_plot.set_xlim(0, 30)
-    mem_plot.set_ylim(-500, 500)
+    # 在创建子图gpu_plot变量
+    gpu_plot = f.add_subplot(414)
+    gpu_plot.clear()
+    gpu_plot.set_ylabel('Values')
+    gpu_plot.set_title('GPU Performance Metrics')
+    gpu_plot.set_xlim(0, 30)
+    gpu_plot.set_ylim(-500, 500)
     
     f.subplots_adjust(top=0.9,bottom=0.1,hspace=0.5)
 
@@ -153,7 +160,10 @@ def update_io_stats():
 
     if max(io_x) < 30:
         io_plot.set_xlim(0, 30)
-    if max(io_yList) > 1000:
+    if max(io_yList) > 2000:
+        io_plot.set_ylim(0, 5000)
+        label_position = 5000/10 + 0.5
+    elif max(io_yList) > 1000:
         io_plot.set_ylim(0, 2000)
         label_position = 2000/10 + 0.5
     elif max(io_yList) > 500:
@@ -201,45 +211,32 @@ def update_cpu_stats():
         cpu_plot.set_ylim(0, 30)
     cpu_plot.text(cpu_x[-1] - 1,cpu_y[-1] - 3,f'{cpu_usage}%',fontdict={'fontsize':11})
 
-def update_mem_stats():
-    global mem_x, mem_y, mem_plot, mem_yList, memory_io
-    mem_plot.clear()
-    mem_x.append(mem_x[-1] + 1)
-    ###丢弃掉前五秒数据，因为前5秒数据不准确
-    if len(mem_x) < 7:
-        mem_y.append(0)
-        mem_yList.append(0)
+def update_gpu_stats():
+    global gpu_x, gpu_y, gpu_plot, gpu
+    gpu_plot.clear()
+    gpu_x.append(gpu_x[-1] + 1)
+    gpu_y.append(gpu)
+    if len(gpu_x) > 30:
+        gpu_x.pop(0)
+        gpu_y.pop(0)
+    gpu_plot.plot(gpu_x, gpu_y)
+    if max(gpu_x) < 30:
+        gpu_plot.set_xlim(0, 30)
+    if max(gpu_y) > 50:
+        gpu_plot.set_ylim(0, 100)
+        label_position = 100/10
+    elif max(gpu_y) > 30:
+        gpu_plot.set_ylim(0, 50)
+        label_position = 50/10
     else:
-        mem_y.append(memory_io)
-        mem_yList.append(abs(memory_io))
-    if len(mem_x) > 30:
-        mem_x.pop(0)
-        mem_y.pop(0)
-        mem_yList.pop(0)
-    mem_plot.plot(mem_x, mem_y)
-    if max(mem_x) < 30:
-        mem_plot.set_xlim(0, 30)
-    if max(mem_yList) > 10000:
-        mem_plot.set_ylim(-20000, 20000)
-        label_position = 20000/10
-    elif max(mem_yList) > 5000:
-        mem_plot.set_ylim(-10000, 10000)
-        label_position = 10000/10
-    elif max(mem_yList) > 2000:
-        mem_plot.set_ylim(-5000, 5000)
-        label_position = 5000/10
-    elif max(mem_yList) > 1000:
-        mem_plot.set_ylim(-2000, 2000)
-        label_position = 2000/10
-    else:
-        mem_plot.set_ylim(-500, 500)
-        label_position = 500/10
+        gpu_plot.set_ylim(0, 30)
+        label_position = 30/10
 
-    mem_plot.set_title('mem Performance Metrics')
-    if len(mem_x) < 7:
-        mem_plot.text(mem_x[-1] - 1,mem_y[-1] + label_position,f'{0} KB/s',fontdict={'fontsize':11})
+    gpu_plot.set_title('GPU Performance Metrics')
+    if len(gpu_x) < 7:
+        gpu_plot.text(gpu_x[-1] - 1,gpu_y[-1] + label_position,f'{0.00} %',fontdict={'fontsize':11})
     else:
-        mem_plot.text(mem_x[-1] - 1,mem_y[-1] + label_position,f'{memory_io:.1f} KB/s',fontdict={'fontsize':11})
+        gpu_plot.text(gpu_x[-1] - 1,gpu_y[-1] + label_position,f'{gpu:.1f} %',fontdict={'fontsize':11})
 
 def update_metrics():
     global monitor, canvas
@@ -248,7 +245,7 @@ def update_metrics():
         update_fps()
         update_io_stats()
         update_cpu_stats()
-        update_mem_stats()
+        update_gpu_stats()
         canvas.draw()
         # 每隔一段时间更新一次
         root.after(500, update_metrics)  # 每500ms更新一次
@@ -301,37 +298,40 @@ def get_foreground_window_name(package_name):
 def get_frame_stats(package_name,current_focus_window):
     """New function to get the frame statistics using gfxinfo."""
     global last_timestamp,fps
+    intended_vsync_index = 0
+    frame_completed_index = 0
 
     result = subprocess.run(["adb", "shell", f"dumpsys gfxinfo {package_name} framestats"], capture_output=True, text=True)
     if result.returncode != 0:
         return None
     lines = result.stdout.splitlines()
-
     timestamps = []
     each_frame_timestamps = []
     isHaveFoundWindow = False
     PROFILEDATA_line = 0
 
     for line in lines:
-        if "Window" in line and current_focus_window in line:
+        ###调试一下
+        if ("Window" in line and current_focus_window in line) or ("Graphics" in line and package_name in line):
             isHaveFoundWindow = True
             continue
         if isHaveFoundWindow and "---PROFILEDATA---" in line:
             PROFILEDATA_line += 1
             continue
-        if isHaveFoundWindow and "Flags,IntendedVsync," in line:
+        if isHaveFoundWindow and "IntendedVsync" in line:
+            intended_vsync_index, frame_completed_index = find_indices(line)
             continue
-        if isHaveFoundWindow and (PROFILEDATA_line == 1):
+        if isHaveFoundWindow and (PROFILEDATA_line == 1) and (intended_vsync_index & frame_completed_index) != 0:
             # 此处代表的是当前活动窗口
             # 我们取PROFILEDATA中间的数据 最多128帧，还可能包含之前重复的帧，所以我们间隔1.5s就取一次数据
             fields = []
             fields = line.split(",")
-            each_frame_timestamp = [float(fields[1]), float(fields[13])]
+            each_frame_timestamp = [float(fields[intended_vsync_index]), float(fields[frame_completed_index])]
             each_frame_timestamps.append(each_frame_timestamp)
             continue
         if PROFILEDATA_line >= 2:
             break
-
+    
     # 需要在计算次数前去除重复帧，通过每帧的起始时间去判断是否是重复的
     for timestamp in each_frame_timestamps:
             if timestamp[0] > last_timestamp:
@@ -450,6 +450,62 @@ def monitor_cpu():
                     line = re.compile(r'\x1b\[.*?m').sub('', cleaned_list[i+1])
                     cpu_usage = float(line.split()[8])
 
+def monitor_gpu():
+    global gpu_process,gpu
+    login_commands = [
+        "su",
+        "busybox telnet 192.168.8.1",  # 替换为实际的QNX IP地址
+        "dsv2022",  # 登录用户名
+        "sv2970188",  # 登录密码
+        "su root",  # 切换到root用户
+        "Sv@2655888",  # root密码
+    ]
+    
+    gpu_commands = [
+        "echo gpu_set_log_level 4 > /dev/kgsl-control",
+        "echo gpubusystats 1000 > /dev/kgsl-control",
+        "slog2info -W | grep -i kgsl"
+    ]
+    log_message("开始连接并登录QNX系统")    
+
+    try:
+        # 启动 adb shell
+        gpu_process = subprocess.Popen(
+            "adb shell", 
+            shell=True, 
+            stdin=subprocess.PIPE, 
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.PIPE, 
+            text=True,
+            bufsize=1  # 行缓冲
+        )
+
+        # 执行登录命令
+        for command in login_commands:
+            send_command(gpu_process, command)
+        log_message("成功登录QNX系统，开始设置和监控GPU信息")  
+        
+        # 设置GPU监控
+        for command in gpu_commands:
+            send_command(gpu_process, command, wait=1)  # 设置日志级别
+        log_message("成功设置和监控GPU信息")
+
+        while True:
+            if stop_threads:
+                break
+            output = gpu_process.stdout.readline()
+            if output == '' and gpu_process.poll() is not None:
+                break
+            if output and "percentage busy" in output:
+                part = output.strip().split()
+                gpu = float(part[-1][:-1])
+    except Exception as e:
+        print(f"发生错误: {e}")
+    finally:
+        # 确保进程关闭
+        gpu_process.terminate()
+        gpu_process.wait()
+
 
 def start_monitor_thread(package_name, event_type, interval=0.5):
     global monitor_thread
@@ -473,6 +529,13 @@ def start_monitor_cpu_thread():
     cpu_thread.daemon = True
     cpu_thread.start()
 
+def start_monitor_gpu_thread():
+    global gpu_thread
+    """启动CPU TOP监控线程"""
+    gpu_thread = threading.Thread(target=monitor_gpu, name="gpu_Thread")
+    gpu_thread.daemon = True
+    gpu_thread.start()
+
 def start_to_Monitor(package_name, event_type, interval=0.5):
     global monitor,prev_timer,stop_threads,prev_meminfo_timer
     if not monitor:
@@ -482,11 +545,12 @@ def start_to_Monitor(package_name, event_type, interval=0.5):
         start_monitor_thread(package_name,event_type,interval)
         start_monitor_touch_events_thread(event_type)
         start_monitor_cpu_thread()
+        start_monitor_gpu_thread()
     else:
         log_message("Monitor is running")
 
 def kill_thread():
-    global monitor_thread, touch_thread, cpu_thread, stop_threads, monitor, touch_process, pid
+    global monitor_thread, touch_thread, cpu_thread, gpu_thread, stop_threads, monitor, touch_process, pid
     stop_threads = True
     if monitor_thread and monitor_thread.is_alive():
         monitor_thread.join()
@@ -495,6 +559,8 @@ def kill_thread():
         touch_thread.join()
     if cpu_thread and cpu_thread.is_alive():
         cpu_thread.join()
+    if gpu_thread and gpu_thread.is_alive():
+        gpu_thread.join()
     monitor = False
     pid = ""
     log_message("Monitoring stopped.")
@@ -512,7 +578,7 @@ def open_root():
     label1.grid(row=0, column=0, sticky=NW, padx=10, pady=10)
 
     box1 = ttk.Combobox(root, width=50)
-    box1['values'] = ('com.gxatek.cockpit.car.settings', 'com.gxatek.cockpit.weather', 'space.syncore.cockpit.map')
+    box1['values'] = ('com.gxatek.cockpit.car.settings', 'com.gxatek.cockpit.weather', 'syncore.space.cockpit.toplauncher')
     box1.current(0)
     box1.grid(row=0, column=1, sticky=NW, padx=10, pady=10)
 
@@ -662,7 +728,11 @@ def monitor_io_and_fps(package_name,interval=0.5):
         
         ###CPU
         log_message(f"{package_name} CPU usage:{cpu_usage:.1f}%")
-
+        ###GPU
+        if gpu == 0:
+            log_message(f"Waiting for GPU info")
+        else:
+            log_message(f"GPU usage:{gpu:.2f}%")
         log_message(f"Monitor: {touchNum} CPS\n")
         touchNum = 0 # 重置touchNum
 
@@ -671,7 +741,7 @@ def set_logging():
     logging.basicConfig(
     level=logging.INFO,  # 设置日志级别为DEBUG，意味着会记录所有级别的日志
     format='%(asctime)s - %(levelname)s - %(message)s',  # 设置日志输出格式
-    filename=rf'D:\Git-script\monitor_io\log\{current_time}.csv',  # 设置日志文件名
+    filename=rf'D:\Git-script\monitor_io\log\{current_time}.log',  # 设置日志文件名
     filemode='a'  # 追加模式（默认是'a'，即追加日志到文件末尾；'w'表示写模式，每次覆盖文件内容）
 )
 
@@ -688,6 +758,8 @@ if __name__ == "__main__":
     global cpu_usage
     cpu_usage = read_bytes_sec = write_bytes_sec  = 0.00 # 初始化绘图全局变量
     fps = 60.0
+    global gpu
+    gpu = 0.00
     global stop_threads 
     stop_threads = False
     global monitor_thread 
@@ -696,6 +768,8 @@ if __name__ == "__main__":
     touch_thread = None
     global cpu_thread
     cpu_thread = None
+    global gpu_thread
+    gpu_thread = None
     current_time = time.strftime('%Y-%m-%d %H_%M_%S', time.localtime())
     global prev_timer
     prev_timer = None
@@ -707,13 +781,11 @@ if __name__ == "__main__":
     last_meminfo_io = 0
     global memory_io
     memory_io = 0
-    global fps_x, fps_y, io_x, io_yR, io_yW, cpu_x, cpu_y, mem_x, mem_y
+    global fps_x, fps_y, io_x, io_yR, io_yW, cpu_x, cpu_y, gpu_x, gpu_y
 
-    fps_x, fps_y, io_x, io_yR, io_yW, cpu_x, cpu_y, mem_x, mem_y= [0], [0], [0], [0], [0], [0], [0], [0], [0]
+    fps_x, fps_y, io_x, io_yR, io_yW, cpu_x, cpu_y, gpu_x, gpu_y= [0], [0], [0], [0], [0], [0], [0], [0], [0]
     global io_yList
     io_yList = []
-    global mem_yList
-    mem_yList = []
 
     set_logging()
     open_root()
