@@ -160,7 +160,13 @@ def update_io_stats():
 
     if max(io_x) < 30:
         io_plot.set_xlim(0, 30)
-    if max(io_yList) > 2000:
+    if max(io_yList) > 10000:
+        io_plot.set_ylim(0, 30000)
+        label_position = 30000/10 + 0.5
+    elif max(io_yList) > 5000:
+        io_plot.set_ylim(0, 10000)
+        label_position = 10000/10 + 0.5
+    elif max(io_yList) > 2000:
         io_plot.set_ylim(0, 5000)
         label_position = 5000/10 + 0.5
     elif max(io_yList) > 1000:
@@ -269,7 +275,7 @@ def get_pid(package_name):
     """Get the PID of the given package name."""
     result = subprocess.run(["adb", "shell", "pidof", package_name], capture_output=True, text=True)
     if result.returncode != 0:
-        return None
+        return ""
     return result.stdout.strip()
 
 def get_io_stats(pid):
@@ -318,7 +324,7 @@ def get_frame_stats(package_name,current_focus_window):
 
     for line in lines:
         ###调试一下
-        if "Window" in line and current_focus_window in line:
+        if "Window" in line and package_name in line:
             isHaveFoundWindow = True
             continue
         if isHaveFoundWindow and "---PROFILEDATA---" in line:
@@ -327,7 +333,7 @@ def get_frame_stats(package_name,current_focus_window):
         if isHaveFoundWindow and "IntendedVsync" in line:
             intended_vsync_index, frame_completed_index = find_indices(line)
             continue
-        if isHaveFoundWindow and (PROFILEDATA_line == 1) and (intended_vsync_index & frame_completed_index) != 0:
+        if isHaveFoundWindow and PROFILEDATA_line == 1 and intended_vsync_index != 0 and frame_completed_index != 0:
             # 此处代表的是当前活动窗口
             fields = []
             fields = line.split(",")
@@ -342,7 +348,7 @@ def get_frame_stats(package_name,current_focus_window):
             if timestamp[0] > last_timestamp:
                 timestamps.append((timestamp[1] - timestamp[0]) / 1000000)
                 last_timestamp = timestamp[0]
-    
+
     janky_list = []
     vsyncOverTimes = 0
     FER = 0.00
@@ -438,11 +444,11 @@ def monitor_touch_events(event_type):
         touch_process.kill()
     
 def monitor_cpu():
-    global cpu_process, cpu_usage,pid
+    global cpu_process, cpu_usage, pid
     # 使用CPU监控事件
     while True:
         if stop_threads:
-            break
+            break    
         if len(pid) > 0:
             result = subprocess.run(["adb", "shell", f"top -n 1 -p {pid}"], capture_output=True, text=True)
             if result.returncode != 0:
@@ -503,9 +509,13 @@ def monitor_gpu():
             output = gpu_process.stdout.readline()
             if output == '' and gpu_process.poll() is not None:
                 break
-            if output and "percentage busy" in output:
+            if output and "elapsed time" in output:
                 part = output.strip().split()
-                gpu = float(part[-1][:-1])
+                if "percentage busy" in output:
+                    gpu = float(part[-1][:-1])
+                elif "busy" in output and "utilization" in output:
+                    ###兼容AH8
+                    gpu = float(part[-4][:-1])
     except Exception as e:
         print(f"发生错误: {e}")
     finally:
@@ -657,7 +667,7 @@ def monitor_io_and_fps(package_name,interval=0.5):
 
     """Monitor the IO throughput and FPS of the given package name."""
     pid = get_pid(package_name)
-    if not pid :
+    if pid == "" :
         log_message(f"Could not find PID for package: {package_name}")
         return
 
