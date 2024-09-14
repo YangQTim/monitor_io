@@ -28,8 +28,13 @@ def process_log_queue():
             log_text.yview(END)
     root.after(100, process_log_queue)  # 每100ms检查一次队列
 
-def send_command(proc, command, wait=1):
+def send_command(proc, command, wait=0.2):
     """发送命令到子进程，并等待指定时间"""
+
+    ### 增加延迟，等待QNX准备就绪
+    if command == "dsv2022":
+        time.sleep(1)
+
     print(f"发送命令: {command}")
     proc.stdin.write(command + "\n")
     proc.stdin.flush()
@@ -113,7 +118,7 @@ def plot_canvas(root):
     gpu_plot.set_ylabel('Values')
     gpu_plot.set_title('GPU Performance Metrics')
     gpu_plot.set_xlim(0, 30)
-    gpu_plot.set_ylim(-500, 500)
+    gpu_plot.set_ylim(0, 110)
     
     f.subplots_adjust(top=0.9,bottom=0.1,hspace=0.5)
 
@@ -123,7 +128,7 @@ def plot_canvas(root):
     return canvas
 
 def update_fps():
-    global fps_x, fps_y, fps_plot
+    global fps_x, fps_y, fps_plot, fps_counter
     fps_plot.clear()
     fps_x.append(fps_x[-1] + 1)
     fps_y.append(fps)
@@ -136,10 +141,12 @@ def update_fps():
     fps_plot.set_ylim(0, 70)
     fps_plot.set_title('FPS Performance Metrics')
     fps_plot.text(fps_x[-1] - 1,fps_y[-1] + 5,'%.2f' % fps,fontdict={'fontsize':11})
+    fps_plot.text(0.02, 0.97, fps_counter, transform=fps_plot.transAxes,
+                  ha='left', va='top', fontsize=8)
 
 
 def update_io_stats():
-    global io_x, io_yR, io_yW, io_plot, io_yList
+    global io_x, io_yR, io_yW, io_plot, io_yList, io_counter
     io_plot.clear()
     io_x.append(io_x[-1] + 1)
     io_yR.append(read_bytes_sec)
@@ -195,10 +202,12 @@ def update_io_stats():
         label_position = 10/10 + 0.5
     io_plot.text(io_x[-1] - 1,io_yR[-1] + 0.5 ,f'rb {read_bytes_sec:.2f} kB/s',fontdict={'fontsize':11})
     io_plot.text(io_x[-1] - 1,io_yW[-1] + label_position,f'wb {write_bytes_sec:.2f} kB/s',fontdict={'fontsize':11})
+    io_plot.text(0.02, 0.97, io_counter, transform=io_plot.transAxes,
+                  ha='left', va='top', fontsize=8)
 
 
 def update_cpu_stats():
-    global cpu_x, cpu_y, cpu_plot
+    global cpu_x, cpu_y, cpu_plot, cpu_counter
     cpu_plot.clear()
     cpu_x.append(cpu_x[-1] + 1)
     cpu_y.append(cpu_usage)
@@ -222,9 +231,11 @@ def update_cpu_stats():
     else:
         cpu_plot.set_ylim(0, 30)
     cpu_plot.text(cpu_x[-1] - 1,cpu_y[-1] + 5,f'{cpu_usage}%',fontdict={'fontsize':11})
+    cpu_plot.text(0.02, 0.97, cpu_counter, transform=cpu_plot.transAxes,
+                  ha='left', va='top', fontsize=8)
 
 def update_gpu_stats():
-    global gpu_x, gpu_y, gpu_plot, gpu
+    global gpu_x, gpu_y, gpu_plot, gpu, gpu_counter
     gpu_plot.clear()
     gpu_x.append(gpu_x[-1] + 1)
     gpu_y.append(gpu)
@@ -235,7 +246,7 @@ def update_gpu_stats():
     if max(gpu_x) < 30:
         gpu_plot.set_xlim(0, 30)
     if max(gpu_y) > 50:
-        gpu_plot.set_ylim(0, 100)
+        gpu_plot.set_ylim(0, 110)
         label_position = 100/10
     elif max(gpu_y) > 30:
         gpu_plot.set_ylim(0, 50)
@@ -248,7 +259,9 @@ def update_gpu_stats():
     if len(gpu_x) < 7:
         gpu_plot.text(gpu_x[-1] - 1,gpu_y[-1] + label_position,f'{0.00} %',fontdict={'fontsize':11})
     else:
-        gpu_plot.text(gpu_x[-1] - 1,gpu_y[-1] + label_position,f'{gpu:.1f} %',fontdict={'fontsize':11})
+        gpu_plot.text(gpu_x[-1] - 1,gpu_y[-1] + label_position,f'{gpu:.2f} %',fontdict={'fontsize':11})
+    gpu_plot.text(0.02, 0.97, gpu_counter, transform=gpu_plot.transAxes,
+                  ha='left', va='top', fontsize=8)
 
 def update_metrics():
     global monitor, canvas
@@ -271,6 +284,16 @@ def find_indices(header_line):
     frame_completed_index = headers.index("FrameCompleted")
     return intended_vsync_index, frame_completed_index
 	
+def check_connect():
+    """check devices connect state."""
+    devices_count = 0
+    result = subprocess.run(["adb", "devices"], capture_output=True, text=True)
+    if result.returncode != 0:
+        return ""
+    output = result.stdout.strip()
+    devices_count = len(output.splitlines()) - 1        ###去掉'List of devices attached'
+    return devices_count
+
 def get_pid(package_name):
     """Get the PID of the given package name."""
     result = subprocess.run(["adb", "shell", "pidof", package_name], capture_output=True, text=True)
@@ -309,7 +332,7 @@ def get_foreground_window_name(package_name):
 
 def get_frame_stats(package_name,current_focus_window):
     """New function to get the frame statistics using gfxinfo."""
-    global last_timestamp,fps
+    global last_timestamp,fps,fps_counter
     intended_vsync_index = 0
     frame_completed_index = 0
 
@@ -370,6 +393,10 @@ def get_frame_stats(package_name,current_focus_window):
 
         fps = frame_count / (frame_count + vsyncOverTimes) * 60
         FER = len(janky_list) / frame_count * 100
+        ###用于观察图表数据是否有变化          
+        fps_counter += 1
+        if fps_counter == 100:
+            fps_counter = 0
 
     janke_frames = f"Janky frames: {len(janky_list)} ({FER:.2f}%)"
     return fps,janke_frames
@@ -444,7 +471,7 @@ def monitor_touch_events(event_type):
         touch_process.kill()
     
 def monitor_cpu():
-    global cpu_process, cpu_usage, pid
+    global cpu_process, cpu_usage, pid, cpu_counter
     # 使用CPU监控事件
     while True:
         if stop_threads:
@@ -460,9 +487,13 @@ def monitor_cpu():
                 if "TIME+ ARGS" in cleaned_list[i]:
                     line = re.compile(r'\x1b\[.*?m').sub('', cleaned_list[i+1])
                     cpu_usage = float(line.split()[8])
+                    ###用于观察图表数据是否有变化          
+                    cpu_counter += 1
+                    if cpu_counter == 100:
+                        cpu_counter = 0
 
 def monitor_gpu():
-    global gpu_process,gpu
+    global gpu_process,gpu,gpu_counter
     login_commands = [
         "su",
         "busybox telnet 192.168.8.1",  # 替换为实际的QNX IP地址
@@ -471,9 +502,10 @@ def monitor_gpu():
         "su root",  # 切换到root用户
         "Sv@2655888",  # root密码
     ]
-    
+
+    # 监控GPU信息的命令
     gpu_commands = [
-        "echo gpu_set_log_level 0 > /dev/kgsl-control",
+        # "echo gpu_set_log_level 0 > /dev/kgsl-control",
         "echo gpubusystats 0 > /dev/kgsl-control",
         "echo gpu_set_log_level 4 > /dev/kgsl-control",
         "echo gpubusystats 1000 > /dev/kgsl-control",
@@ -497,10 +529,10 @@ def monitor_gpu():
         for command in login_commands:
             send_command(gpu_process, command)
         print("成功登录QNX系统，开始设置和监控GPU信息")  
-        
+
         # 设置GPU监控
         for command in gpu_commands:
-            send_command(gpu_process, command, wait=1)
+            send_command(gpu_process, command,wait=0.5)
         print("成功设置和监控GPU信息")
 
         while True:
@@ -511,23 +543,28 @@ def monitor_gpu():
                 break
             if output and "elapsed time" in output:
                 part = output.strip().split()
+                ###用于观察图表数据是否有变化          
+                gpu_counter += 1
+                if gpu_counter == 100:
+                    gpu_counter = 0
+
                 if "percentage busy" in output:
                     gpu = float(part[-1][:-1])
                 elif "busy" in output and "utilization" in output:
                     ###兼容AH8
-                    gpu = float(part[-4][:-1])
+                    gpu = float(part[-4][:-2])
     except Exception as e:
-        print(f"发生错误: {e}")
+        print(f"发生错误1: {e}")
     finally:
         # 确保进程关闭
-        gpu_process.terminate()
+        gpu_process.kill()
         gpu_process.wait()
 
 
 def start_monitor_thread(package_name, event_type, interval=0.5):
     global monitor_thread
     """启动监控线程"""
-    monitor_thread = threading.Thread(target=monitor_io_and_fps, name="IO_FPS_Thread", args=(package_name, interval))
+    monitor_thread = threading.Thread(target=monitor_io_and_fps, name="IO_FPS_Thread", args=(package_name, event_type, interval))
     monitor_thread.daemon = True
     monitor_thread.start()
 
@@ -555,19 +592,25 @@ def start_monitor_gpu_thread():
 
 def start_to_Monitor(package_name, event_type, interval=0.5):
     global monitor,prev_timer,stop_threads,prev_meminfo_timer
+
+    devices_count = check_connect()
+    if devices_count == 0 :
+        log_message(f"Could not find any devices")
+        return
+    elif devices_count > 1:
+        log_message(f"Found multiple devices, please connect only one device")
+        return
+
     if not monitor:
         prev_timer = time.time()    ###记录IO初始时间
         prev_meminfo_timer = time.time()
         stop_threads = False
         start_monitor_thread(package_name,event_type,interval)
-        start_monitor_touch_events_thread(event_type)
-        start_monitor_cpu_thread()
-        start_monitor_gpu_thread()
     else:
         log_message("Monitor is running")
 
 def kill_thread():
-    global monitor_thread, touch_thread, cpu_thread, gpu_thread, stop_threads, monitor, touch_process, pid
+    global monitor_thread, touch_thread, cpu_thread, gpu_thread, stop_threads, monitor, touch_process, pid, gpu
     stop_threads = True
     if monitor_thread and monitor_thread.is_alive():
         monitor_thread.join()
@@ -580,6 +623,7 @@ def kill_thread():
         gpu_thread.join()
     monitor = False
     pid = ""
+    gpu = 0.00
     log_message("Monitoring stopped.")
 
 
@@ -660,10 +704,11 @@ def open_root():
 
     root.mainloop()
 
-def monitor_io_and_fps(package_name,interval=0.5):
+def monitor_io_and_fps(package_name,event_type,interval=0.5):
     global touchNum,monitor,chart_frame,pid
     global read_bytes_sec,write_bytes_sec,fps,cpu_usage ###绘图全局变量
     global prev_timer,prev_meminfo_timer,memory_io
+    global io_counter
 
     """Monitor the IO throughput and FPS of the given package name."""
     pid = get_pid(package_name)
@@ -673,7 +718,7 @@ def monitor_io_and_fps(package_name,interval=0.5):
 
     window_name = get_foreground_window_name(package_name)
     if not window_name:
-        log_message(f"Could not find foreground window for package: {package_name}")
+        log_message(f"Could not find foreevent_typeground window for package: {package_name}")
         return
 
     ###yqt 重启后获取root权限
@@ -687,6 +732,11 @@ def monitor_io_and_fps(package_name,interval=0.5):
     if not prev_io_stats:
         log_message(f"Could not get IO stats for PID: {pid}")
         return
+
+    ###确保主进程满足条件后再启动子线程
+    start_monitor_touch_events_thread(event_type)
+    start_monitor_cpu_thread()
+    start_monitor_gpu_thread()
 
     while True:
         if stop_threads:
@@ -723,6 +773,10 @@ def monitor_io_and_fps(package_name,interval=0.5):
         prev_io_stats = current_io_stats
         prev_timer = current_timer
         log_message(f"Read: {read_bytes_sec:.1f} kBytes/s, Write: {write_bytes_sec:.1f} kBytes/s")
+        ###用于观察图表数据是否有变化          
+        io_counter += 1
+        if io_counter == 100:
+            io_counter = 0
         
         ##内存
         meminfo = get_meminfo(package_name)# 读取内存使用情况,return类型为dict 
@@ -744,7 +798,7 @@ def monitor_io_and_fps(package_name,interval=0.5):
             log_message(f"FPS: {fps:.2f},{janky_frames}")
         
         ###CPU
-        log_message(f"{package_name} CPU usage:{cpu_usage:.1f}%")
+        log_message(f"{package_name} CPU usage:{cpu_usage:.2f}%")
         ###GPU
         if gpu == 0:
             log_message(f"Waiting for GPU info")
@@ -799,10 +853,11 @@ if __name__ == "__main__":
     global memory_io
     memory_io = 0
     global fps_x, fps_y, io_x, io_yR, io_yW, cpu_x, cpu_y, gpu_x, gpu_y
-
     fps_x, fps_y, io_x, io_yR, io_yW, cpu_x, cpu_y, gpu_x, gpu_y= [0], [0], [0], [0], [0], [0], [0], [0], [0]
     global io_yList
     io_yList = []
+    global fps_counter, io_counter, cpu_counter, gpu_counter
+    fps_counter, io_counter, cpu_counter, gpu_counter = 0, 0, 0, 0
 
     set_logging()
     open_root()
