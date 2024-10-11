@@ -314,19 +314,28 @@ def get_io_stats(pid):
 
 def get_foreground_window_name(package_name):
     """Get the foreground window name for the given package name."""
-    result = subprocess.run(["adb", "shell", "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp'"], capture_output=True, text=True)
+    result = subprocess.run(["adb", "shell", "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp|displayId'"], capture_output=True, text=True)
     ###等效命令
     # result = subprocess.run(["adb", "shell", "dumpsys activity | grep mResume"], capture_output=True, text=True)
     if result.returncode != 0:
         return None
 
     lines = result.stdout.splitlines()
+    mCurrentFocus = ""
+    mFocusedApp = ""
     for line in lines:
-        if package_name in line:
-            parts = line.split()
-            if len(parts) > 1:
-                window_name = parts[-1][:-1]
+        if "mCurrentFocus=" in line:
+            mCurrentFocus = line.split("=")[-1]
+        if "mFocusedApp=" in line:
+            mFocusedApp = line.split("=")[-1]
+        if "displayId=" in line:
+            displayId = line.split("=")[-1]
+            print(mCurrentFocus,mFocusedApp,displayId)
+            if displayId == "0" and package_name in mCurrentFocus:
+                window_name = mCurrentFocus.split()[-1].split("/")[0]
+                print(window_name)
                 return window_name
+    
     return None
 
 
@@ -434,16 +443,22 @@ def get_meminfo(package_name):
 
 def get_current_focus_window():
     """Get the mLastPausedActivity info."""
-    result = subprocess.run(["adb", "shell", "dumpsys window | grep 'mCurrentFocus'"], capture_output=True, text=True)
+    result = subprocess.run(["adb", "shell", "dumpsys window | grep -E 'mCurrentFocus|mFocusedApp|displayId'"], capture_output=True, text=True)
     if result.returncode != 0:
         return None
 
     lines = result.stdout.splitlines()
+    mCurrentFocus = ""
+    mFocusedApp = ""
     for line in lines:
-        if "mCurrentFocus" in line:
-            parts = line.split()
-            if len(parts) > 1:
-                activity = parts[-1][:-1]
+        if "mCurrentFocus=" in line:
+            mCurrentFocus = line.split("=")[-1]
+        if "mFocusedApp=" in line:
+            mFocusedApp = line.split("=")[-1]
+        if "displayId=" in line:
+            displayId = line.split("=")[-1]
+            if displayId == "0" and len(mFocusedApp) > 0 and "ReminderDialog" not in mCurrentFocus:
+                activity = mFocusedApp.split()[-2]
                 packageName = activity.split("/")[0]
                 if "/." in activity:
                     activityName = packageName + "/" + packageName + "." + activity.split("/.")[1]
@@ -506,11 +521,17 @@ def monitor_gpu():
     # 监控GPU信息的命令
     gpu_commands = [
         # "echo gpu_set_log_level 0 > /dev/kgsl-control",
-        "echo gpubusystats 0 > /dev/kgsl-control",
+        # "echo gpubusystats 0 > /dev/kgsl-control",
         "echo gpu_set_log_level 4 > /dev/kgsl-control",
         "echo gpubusystats 1000 > /dev/kgsl-control",
         "slog2info -W | grep -i kgsl"
     ]
+
+    exit_commands = [
+        "echo gpu_set_log_level 4 > /dev/kgsl-control",
+        "echo gpubusystats 1000 > /dev/kgsl-control"
+    ]
+
     print("开始连接并登录QNX系统")    
 
     try:
@@ -532,11 +553,13 @@ def monitor_gpu():
 
         # 设置GPU监控
         for command in gpu_commands:
-            send_command(gpu_process, command,wait=0.5)
+            send_command(gpu_process, command,wait=1)
         print("成功设置和监控GPU信息")
 
         while True:
             if stop_threads:
+                send_command(gpu_process, exit_commands[0],wait=0.2)
+                send_command(gpu_process, exit_commands[1],wait=0.2)
                 break
             output = gpu_process.stdout.readline()
             if output == '' and gpu_process.poll() is not None:
@@ -828,7 +851,7 @@ if __name__ == "__main__":
     global fps
     global cpu_usage
     cpu_usage = read_bytes_sec = write_bytes_sec  = 0.00 # 初始化绘图全局变量
-    fps = 60.0
+    fps = 0.0
     global gpu
     gpu = 0.00
     global stop_threads 
